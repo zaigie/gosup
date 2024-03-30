@@ -16,7 +16,7 @@ var (
 )
 
 type ProcessManager struct {
-	mu      sync.Mutex
+	mu      sync.RWMutex
 	Process map[int]*Process
 	nextID  int
 	wg      sync.WaitGroup
@@ -36,6 +36,9 @@ type Process struct {
 }
 
 func (pm *ProcessManager) List() []int {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+
 	ids := make([]int, 0, len(pm.Process))
 	for id := range pm.Process {
 		ids = append(ids, id)
@@ -45,9 +48,12 @@ func (pm *ProcessManager) List() []int {
 }
 
 func (pm *ProcessManager) Get(id int) (*Process, error) {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+
 	process, exists := pm.Process[id]
 	if !exists {
-		return nil, ErrorProcessNotFound
+		return nil, fmt.Errorf("process with id %d does not exist", id)
 	}
 
 	return process, nil
@@ -118,8 +124,15 @@ func (pm *ProcessManager) Stop(id int) error {
 }
 
 func (pm *ProcessManager) KillAll() {
-	for id := range pm.Process {
-		pm.Stop(id)
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	for id, process := range pm.Process {
+		if err := process.Cmd.Process.Kill(); err != nil {
+			log.Printf("failed to kill process %d: %v", id, err)
+			continue
+		}
+		delete(pm.Process, id)
 	}
 }
 
