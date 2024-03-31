@@ -42,9 +42,10 @@ type ProcessHook interface {
 }
 
 type Process struct {
-	Cmd    *exec.Cmd
-	Stdout io.ReadCloser
-	Stderr io.ReadCloser
+	Cmd      *exec.Cmd
+	Stdout   io.ReadCloser
+	Stderr   io.ReadCloser
+	stopChan chan struct{}
 }
 
 func (pm *ProcessManager) List() []int {
@@ -89,7 +90,7 @@ func (pm *ProcessManager) Start(name string, args []string, hook ProcessHook, ho
 	}
 
 	pm.mu.Lock()
-	pm.Process[id] = &Process{Cmd: cmd, Stdout: stdoutPipe, Stderr: stderrPipe}
+	pm.Process[id] = &Process{Cmd: cmd, Stdout: stdoutPipe, Stderr: stderrPipe, stopChan: make(chan struct{})}
 	pm.wg.Add(1)
 	pm.mu.Unlock()
 
@@ -112,6 +113,7 @@ func (pm *ProcessManager) Start(name string, args []string, hook ProcessHook, ho
 	}
 
 	go func() {
+		var err error
 		defer stdoutPipe.Close()
 		defer stderrPipe.Close()
 		if hook != nil {
@@ -120,10 +122,18 @@ func (pm *ProcessManager) Start(name string, args []string, hook ProcessHook, ho
 			handlePipe(id, stdoutPipe, stderrPipe)
 		}
 
-		err := cmd.Wait()
+		select {
+		case <-pm.Process[id].stopChan:
 
-		if hook != nil {
-			hook.AfterWait(hookCtx, err)
+		case <-func() chan struct{} {
+			ch := make(chan struct{})
+			go func() {
+				defer close(ch)
+				err = cmd.Wait()
+			}()
+			return ch
+		}():
+
 		}
 
 		pm.mu.Lock()
@@ -131,6 +141,10 @@ func (pm *ProcessManager) Start(name string, args []string, hook ProcessHook, ho
 		pm.mu.Unlock()
 
 		pm.wg.Done()
+
+		if hook != nil {
+			hook.AfterWait(hookCtx, err)
+		}
 	}()
 
 	return id, nil
@@ -145,6 +159,7 @@ func (pm *ProcessManager) Stop(id int) error {
 		return ErrorProcessNotFound
 	}
 
+	close(process.stopChan)
 	if err := process.Cmd.Process.Kill(); err != nil {
 		return err
 	}
@@ -159,6 +174,7 @@ func (pm *ProcessManager) KillAll() []error {
 
 	errs := make([]error, 0, len(pm.Process))
 	for id, process := range pm.Process {
+		close(process.stopChan)
 		if err := process.Cmd.Process.Kill(); err != nil {
 			// log.Printf("failed to kill process %d: %v\n", id, err)
 			errs = append(errs, fmt.Errorf("failed to kill process %d: %v", id, err))
