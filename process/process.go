@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+
+	"github.com/google/uuid"
 )
 
 var (
@@ -17,14 +19,13 @@ var (
 
 type ProcessManager struct {
 	mu      sync.RWMutex
-	Process map[int]*Process
-	nextID  int
+	Process map[string]*Process
 	wg      sync.WaitGroup
 }
 
 func NewManager() *ProcessManager {
 	return &ProcessManager{
-		Process: make(map[int]*Process),
+		Process: make(map[string]*Process),
 	}
 }
 
@@ -48,11 +49,11 @@ type Process struct {
 	stopChan chan struct{}
 }
 
-func (pm *ProcessManager) List() []int {
+func (pm *ProcessManager) List() []string {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
 
-	ids := make([]int, 0, len(pm.Process))
+	ids := make([]string, 0, len(pm.Process))
 	for id := range pm.Process {
 		ids = append(ids, id)
 	}
@@ -60,7 +61,7 @@ func (pm *ProcessManager) List() []int {
 	return ids
 }
 
-func (pm *ProcessManager) Get(id int) (*Process, error) {
+func (pm *ProcessManager) Get(id string) (*Process, error) {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
 
@@ -72,21 +73,22 @@ func (pm *ProcessManager) Get(id int) (*Process, error) {
 	return process, nil
 }
 
-func (pm *ProcessManager) Start(name string, args []string, hook ProcessHook, hookParams map[string]interface{}) (int, error) {
+func (pm *ProcessManager) Start(id string, name string, args []string, hook ProcessHook, hookParams map[string]interface{}) (string, error) {
 	pm.mu.Lock()
-	id := pm.nextID
-	pm.nextID++
+	if id == "" {
+		id = uuid.New().String()
+	}
 	pm.mu.Unlock()
 
 	cmd := exec.Command(name, args...)
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		return 0, err
+		return "", err
 	}
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
-		return 0, err
+		return "", err
 	}
 
 	pm.mu.Lock()
@@ -105,7 +107,7 @@ func (pm *ProcessManager) Start(name string, args []string, hook ProcessHook, ho
 	}
 
 	if err := cmd.Start(); err != nil {
-		return 0, err
+		return "", err
 	}
 
 	if hook != nil {
@@ -150,7 +152,7 @@ func (pm *ProcessManager) Start(name string, args []string, hook ProcessHook, ho
 	return id, nil
 }
 
-func (pm *ProcessManager) Stop(id int) error {
+func (pm *ProcessManager) Stop(id string) error {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
@@ -177,7 +179,7 @@ func (pm *ProcessManager) KillAll() []error {
 		close(process.stopChan)
 		if err := process.Cmd.Process.Kill(); err != nil {
 			// log.Printf("failed to kill process %d: %v\n", id, err)
-			errs = append(errs, fmt.Errorf("failed to kill process %d: %v", id, err))
+			errs = append(errs, fmt.Errorf("failed to kill process %s: %v", id, err))
 			continue
 		}
 		delete(pm.Process, id)
@@ -189,20 +191,20 @@ func (pm *ProcessManager) WaitAll() {
 	pm.wg.Wait()
 }
 
-func handleScanner(id int, scanner *bufio.Scanner) {
+func handleScanner(id string, scanner *bufio.Scanner) {
 	for scanner.Scan() {
 		line := scanner.Text()
-		log.Printf("[%d]: %s\n", id, line)
+		log.Printf("[%s]: %s\n", id, line)
 	}
 	if err := scanner.Err(); err != nil {
 		if strings.Contains(err.Error(), "file already closed") {
 			return
 		}
-		fmt.Printf("[%d] error reading: %v\n", id, err)
+		fmt.Printf("[%s] error reading: %v\n", id, err)
 	}
 }
 
-func handlePipe(id int, stdout, stderr io.ReadCloser) {
+func handlePipe(id string, stdout, stderr io.ReadCloser) {
 	outScanner := bufio.NewScanner(stdout)
 	handleScanner(id, outScanner)
 

@@ -18,7 +18,7 @@ func main() {
 	wd, _ := os.Getwd()
 	scriptPath := filepath.Join(wd, "test/run.py")
 	args1 := []string{"-u", scriptPath}
-	_, err := pm.Start("python", args1, hook.MyProcessHook{}, map[string]interface{}{
+	_, err := pm.Start("", "python", args1, hook.MyProcessHook{}, map[string]interface{}{
 		"prefix": "hello",
 	})
 	if err != nil {
