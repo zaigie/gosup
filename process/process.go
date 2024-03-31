@@ -35,12 +35,14 @@ type HookContext struct {
 }
 
 type ProcessHook interface {
+	BeforeStart(ctx HookContext)
+	AfterStart(ctx HookContext)
 	BeforeWait(ctx HookContext)
+	AfterWait(ctx HookContext, err error)
 }
 
 type Process struct {
 	Cmd    *exec.Cmd
-	Hook   ProcessHook
 	Stdout io.ReadCloser
 	Stderr io.ReadCloser
 }
@@ -86,30 +88,43 @@ func (pm *ProcessManager) Start(name string, args []string, hook ProcessHook, ho
 		return 0, err
 	}
 
+	pm.mu.Lock()
+	pm.Process[id] = &Process{Cmd: cmd, Stdout: stdoutPipe, Stderr: stderrPipe}
+	pm.wg.Add(1)
+	pm.mu.Unlock()
+
+	hookCtx := HookContext{
+		Stdout: stdoutPipe,
+		Stderr: stderrPipe,
+		Params: hookParams,
+	}
+
+	if hook != nil {
+		hook.BeforeStart(hookCtx)
+	}
+
 	if err := cmd.Start(); err != nil {
 		return 0, err
 	}
 
-	pm.mu.Lock()
-	pm.Process[id] = &Process{Cmd: cmd, Hook: hook, Stdout: stdoutPipe, Stderr: stderrPipe}
-	pm.wg.Add(1)
-	pm.mu.Unlock()
+	if hook != nil {
+		hook.AfterStart(hookCtx)
+	}
 
 	go func() {
 		defer stdoutPipe.Close()
 		defer stderrPipe.Close()
-		if pm.Process[id].Hook != nil {
-			hookCtx := HookContext{
-				Stdout: stdoutPipe,
-				Stderr: stderrPipe,
-				Params: hookParams,
-			}
-			pm.Process[id].Hook.BeforeWait(hookCtx)
+		if hook != nil {
+			hook.BeforeWait(hookCtx)
 		} else {
 			handlePipe(id, stdoutPipe, stderrPipe)
 		}
 
-		cmd.Wait()
+		err := cmd.Wait()
+
+		if hook != nil {
+			hook.AfterWait(hookCtx, err)
+		}
 
 		pm.mu.Lock()
 		delete(pm.Process, id)
