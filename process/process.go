@@ -80,6 +80,10 @@ func (pm *ProcessManager) Start(id string, name string, args []string, hook Proc
 	}
 	pm.mu.Unlock()
 
+	if process, _ := pm.Get(id); process != nil {
+		return "", ErrorProcessRunning
+	}
+
 	cmd := exec.Command(name, args...)
 
 	stdoutPipe, err := cmd.StdoutPipe()
