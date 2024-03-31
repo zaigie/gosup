@@ -28,9 +28,19 @@ func NewManager() *ProcessManager {
 	}
 }
 
+type HookContext struct {
+	Stdout io.ReadCloser
+	Stderr io.ReadCloser
+	Params map[string]interface{}
+}
+
+type ProcessHook interface {
+	BeforeWait(ctx HookContext)
+}
+
 type Process struct {
 	Cmd    *exec.Cmd
-	Before func(stdout, stderr io.ReadCloser)
+	Hook   ProcessHook
 	Stdout io.ReadCloser
 	Stderr io.ReadCloser
 }
@@ -59,7 +69,7 @@ func (pm *ProcessManager) Get(id int) (*Process, error) {
 	return process, nil
 }
 
-func (pm *ProcessManager) Start(name string, args []string, beforeWait func(stdout, stderr io.ReadCloser)) (int, error) {
+func (pm *ProcessManager) Start(name string, args []string, hook ProcessHook, hookParams map[string]interface{}) (int, error) {
 	pm.mu.Lock()
 	id := pm.nextID
 	pm.nextID++
@@ -81,15 +91,20 @@ func (pm *ProcessManager) Start(name string, args []string, beforeWait func(stdo
 	}
 
 	pm.mu.Lock()
-	pm.Process[id] = &Process{Cmd: cmd, Before: beforeWait, Stdout: stdoutPipe, Stderr: stderrPipe}
+	pm.Process[id] = &Process{Cmd: cmd, Hook: hook, Stdout: stdoutPipe, Stderr: stderrPipe}
 	pm.wg.Add(1)
 	pm.mu.Unlock()
 
 	go func() {
 		defer stdoutPipe.Close()
 		defer stderrPipe.Close()
-		if beforeWait != nil {
-			beforeWait(stdoutPipe, stderrPipe)
+		if pm.Process[id].Hook != nil {
+			hookCtx := HookContext{
+				Stdout: stdoutPipe,
+				Stderr: stderrPipe,
+				Params: hookParams,
+			}
+			pm.Process[id].Hook.BeforeWait(hookCtx)
 		} else {
 			handlePipe(id, stdoutPipe, stderrPipe)
 		}
