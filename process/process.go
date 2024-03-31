@@ -53,7 +53,7 @@ func (pm *ProcessManager) Get(id int) (*Process, error) {
 
 	process, exists := pm.Process[id]
 	if !exists {
-		return nil, fmt.Errorf("process with id %d does not exist", id)
+		return nil, ErrorProcessNotFound
 	}
 
 	return process, nil
@@ -123,17 +123,20 @@ func (pm *ProcessManager) Stop(id int) error {
 	return nil
 }
 
-func (pm *ProcessManager) KillAll() {
+func (pm *ProcessManager) KillAll() []error {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
+	errs := make([]error, 0, len(pm.Process))
 	for id, process := range pm.Process {
 		if err := process.Cmd.Process.Kill(); err != nil {
-			log.Printf("failed to kill process %d: %v", id, err)
+			// log.Printf("failed to kill process %d: %v\n", id, err)
+			errs = append(errs, fmt.Errorf("failed to kill process %d: %v", id, err))
 			continue
 		}
 		delete(pm.Process, id)
 	}
+	return errs
 }
 
 func (pm *ProcessManager) WaitAll() {
