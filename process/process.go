@@ -95,11 +95,6 @@ func (pm *ProcessManager) Start(id string, name string, args []string, hook Proc
 		return "", err
 	}
 
-	pm.mu.Lock()
-	pm.Process[id] = &Process{Cmd: cmd, Stdout: stdoutPipe, Stderr: stderrPipe, stopChan: make(chan struct{})}
-	pm.wg.Add(1)
-	pm.mu.Unlock()
-
 	hookCtx := HookContext{
 		Stdout: stdoutPipe,
 		Stderr: stderrPipe,
@@ -113,6 +108,11 @@ func (pm *ProcessManager) Start(id string, name string, args []string, hook Proc
 	if err := cmd.Start(); err != nil {
 		return "", err
 	}
+
+	pm.mu.Lock()
+	pm.Process[id] = &Process{Cmd: cmd, Stdout: stdoutPipe, Stderr: stderrPipe, stopChan: make(chan struct{})}
+	pm.wg.Add(1)
+	pm.mu.Unlock()
 
 	if hook != nil {
 		hook.AfterStart(hookCtx)
