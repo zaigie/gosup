@@ -6,8 +6,10 @@ import (
 	"io"
 	"log"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/google/uuid"
 )
@@ -21,12 +23,70 @@ type ProcessManager struct {
 	mu      sync.RWMutex
 	Process map[string]*Process
 	wg      sync.WaitGroup
+	limit   int // 限制数量
+	mq      []MQ
+	total   atomic.Int32 // mq的数量
+	mux     sync.Mutex
 }
 
-func NewManager() *ProcessManager {
+type MQ struct {
+	Fn    Fn
+	Order int
+}
+
+type Fn func() (string, error)
+
+func NewManager(limit int) *ProcessManager {
 	return &ProcessManager{
 		Process: make(map[string]*Process),
+		limit:   limit,
+		mq:      make([]MQ, 0, 10),
 	}
+}
+
+// AddTask 添加任务
+func (pm *ProcessManager) AddTask(tasks ...MQ) {
+	pm.mux.Lock()
+	defer pm.mux.Unlock()
+	pm.mq = append(pm.mq, tasks...)
+	pm.total.Add(int32(len(tasks)))
+}
+
+// RUN 执行队列
+func (pm *ProcessManager) RUN() {
+	for pm.total.Load() > 0 {
+		mq := pm.getNextTask()
+		for _, q := range mq {
+			q.Fn()
+		}
+	}
+}
+
+// getNextTask 获取任务
+func (pm *ProcessManager) getNextTask() []MQ {
+	pm.mux.Lock()
+	defer pm.mux.Unlock()
+
+	sort.Slice(pm.mq, func(i, j int) bool {
+		return less(pm.mq[i], pm.mq[j])
+	})
+
+	limit := pm.limit
+	if len(pm.mq) <= pm.limit {
+		limit = len(pm.mq)
+	}
+
+	mq := make([]MQ, 0, limit)
+	copy(mq, pm.mq[:limit])
+
+	pm.mq = pm.mq[limit:]
+	pm.total.Add(-int32(limit))
+
+	return mq
+}
+
+func less(a, b MQ) bool {
+	return a.Order < b.Order
 }
 
 type HookContext struct {
