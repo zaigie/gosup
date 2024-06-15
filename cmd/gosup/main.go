@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -12,18 +11,28 @@ import (
 )
 
 func main() {
-	pm := process.NewManager()
+	pm := process.NewManager(2)
 	// defer pm.KillAll()
 
 	wd, _ := os.Getwd()
 	scriptPath := filepath.Join(wd, "test/run.py")
 	args1 := []string{"-u", scriptPath}
-	_, err := pm.Start("", "python", args1, hook.MyProcessHook{}, map[string]interface{}{
-		"prefix": "hello",
-	})
-	if err != nil {
-		fmt.Println(err)
-	}
+
+	pm.AddTask(process.MQ{Fn: func() (string, error) {
+		return pm.Start("", "python", args1, hook.MyProcessHook{}, map[string]interface{}{
+			"prefix": "hello",
+		})
+	}, Order: 1}, process.MQ{Fn: func() (string, error) {
+		return pm.Start("", "python", args1, hook.MyProcessHook{}, map[string]interface{}{
+			"prefix": "hello",
+		})
+	}, Order: 1}, process.MQ{Fn: func() (string, error) {
+		return pm.Start("", "python", args1, hook.MyProcessHook{}, map[string]interface{}{
+			"prefix": "hello",
+		})
+	}, Order: 1})
+
+	pm.RUN()
 
 	time.Sleep(2 * time.Second)
 
