@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"log"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -17,31 +17,23 @@ var (
 	ErrorProcessRunning  = fmt.Errorf("process is already running")
 )
 
+/* ProcessManager */
+
+// ProcessManager is a manager for processes.
 type ProcessManager struct {
-	mu      sync.RWMutex
-	Process map[string]*Process
-	wg      sync.WaitGroup
+	mu        sync.RWMutex
+	Processes map[string]*Process
+	wg        sync.WaitGroup
 }
 
+// NewManager creates a new ProcessManager.
 func NewManager() *ProcessManager {
 	return &ProcessManager{
-		Process: make(map[string]*Process),
+		Processes: make(map[string]*Process),
 	}
 }
 
-type HookContext struct {
-	Stdout io.ReadCloser
-	Stderr io.ReadCloser
-	Params map[string]interface{}
-}
-
-type ProcessHook interface {
-	BeforeStart(ctx HookContext)
-	AfterStart(ctx HookContext)
-	BeforeWait(ctx HookContext)
-	AfterWait(ctx HookContext, err error)
-}
-
+// Process is a running process.
 type Process struct {
 	Cmd      *exec.Cmd
 	Stdout   io.ReadCloser
@@ -49,23 +41,25 @@ type Process struct {
 	stopChan chan struct{}
 }
 
+// List returns the list of process IDs.
 func (pm *ProcessManager) List() []string {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
 
-	ids := make([]string, 0, len(pm.Process))
-	for id := range pm.Process {
+	ids := make([]string, 0, len(pm.Processes))
+	for id := range pm.Processes {
 		ids = append(ids, id)
 	}
 
 	return ids
 }
 
+// Get returns the process with the given ID.
 func (pm *ProcessManager) Get(id string) (*Process, error) {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
 
-	process, exists := pm.Process[id]
+	process, exists := pm.Processes[id]
 	if !exists {
 		return nil, ErrorProcessNotFound
 	}
@@ -73,13 +67,17 @@ func (pm *ProcessManager) Get(id string) (*Process, error) {
 	return process, nil
 }
 
-func (pm *ProcessManager) Start(id string, name string, args []string, hook ProcessHook, hookParams map[string]interface{}) (string, error) {
-	pm.mu.Lock()
-	if id == "" {
-		id = uuid.New().String()
-	}
-	pm.mu.Unlock()
+// IsRunning returns true if the process with the given ID is running.
+func (pm *ProcessManager) IsRunning(id string) bool {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
 
+	_, exists := pm.Processes[id]
+	return exists
+}
+
+// StartWithID starts a process with the given ID.
+func (pm *ProcessManager) StartWithID(id string, name string, args []string, hook ProcessHook, hookParams map[string]interface{}) (string, error) {
 	if process, _ := pm.Get(id); process != nil {
 		return "", ErrorProcessRunning
 	}
@@ -95,41 +93,41 @@ func (pm *ProcessManager) Start(id string, name string, args []string, hook Proc
 		return "", err
 	}
 
-	hookCtx := HookContext{
-		Stdout: stdoutPipe,
-		Stderr: stderrPipe,
-		Params: hookParams,
+	if hook == nil {
+		hook = DefaultProcessHook{}
 	}
 
-	if hook != nil {
-		hook.BeforeStart(hookCtx)
+	hookCtx := HookContext{
+		Stdout:      stdoutPipe,
+		Stderr:      stderrPipe,
+		Params:      hookParams,
+		ProcessID:   id,
+		ProcessName: name,
+		ProcessArgs: args,
 	}
+
+	hook.BeforeStart(hookCtx)
 
 	if err := cmd.Start(); err != nil {
 		return "", err
 	}
 
 	pm.mu.Lock()
-	pm.Process[id] = &Process{Cmd: cmd, Stdout: stdoutPipe, Stderr: stderrPipe, stopChan: make(chan struct{})}
+	pm.Processes[id] = &Process{Cmd: cmd, Stdout: stdoutPipe, Stderr: stderrPipe, stopChan: make(chan struct{})}
 	pm.wg.Add(1)
 	pm.mu.Unlock()
 
-	if hook != nil {
-		hook.AfterStart(hookCtx)
-	}
+	hook.AfterStart(hookCtx)
 
 	go func() {
 		var err error
 		defer stdoutPipe.Close()
 		defer stderrPipe.Close()
-		if hook != nil {
-			hook.BeforeWait(hookCtx)
-		} else {
-			handlePipe(id, stdoutPipe, stderrPipe)
-		}
+
+		hook.BeforeWait(hookCtx)
 
 		select {
-		case <-pm.Process[id].stopChan:
+		case <-pm.Processes[id].stopChan:
 
 		case <-func() chan struct{} {
 			ch := make(chan struct{})
@@ -143,7 +141,7 @@ func (pm *ProcessManager) Start(id string, name string, args []string, hook Proc
 		}
 
 		pm.mu.Lock()
-		delete(pm.Process, id)
+		delete(pm.Processes, id)
 		pm.mu.Unlock()
 
 		pm.wg.Done()
@@ -156,11 +154,18 @@ func (pm *ProcessManager) Start(id string, name string, args []string, hook Proc
 	return id, nil
 }
 
+// Start starts a process with a random ID.
+func (pm *ProcessManager) Start(name string, args []string, hook ProcessHook, hookParams map[string]interface{}) (string, error) {
+	id := uuid.New().String()[:8]
+	return pm.StartWithID(id, name, args, hook, hookParams)
+}
+
+// Stop stops the process with the given ID.
 func (pm *ProcessManager) Stop(id string) error {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
-	process, exists := pm.Process[id]
+	process, exists := pm.Processes[id]
 	if !exists {
 		return ErrorProcessNotFound
 	}
@@ -170,48 +175,99 @@ func (pm *ProcessManager) Stop(id string) error {
 		return err
 	}
 
-	delete(pm.Process, id)
+	delete(pm.Processes, id)
 	return nil
 }
 
+// KillAll kills all running processes.
 func (pm *ProcessManager) KillAll() []error {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
-	errs := make([]error, 0, len(pm.Process))
-	for id, process := range pm.Process {
+	errs := make([]error, 0, len(pm.Processes))
+	for id, process := range pm.Processes {
 		close(process.stopChan)
 		if err := process.Cmd.Process.Kill(); err != nil {
-			// log.Printf("failed to kill process %d: %v\n", id, err)
 			errs = append(errs, fmt.Errorf("failed to kill process %s: %v", id, err))
 			continue
 		}
-		delete(pm.Process, id)
+		delete(pm.Processes, id)
 	}
 	return errs
 }
 
+// WaitAll waits for all running processes to finish.
 func (pm *ProcessManager) WaitAll() {
 	pm.wg.Wait()
 }
 
-func handleScanner(id string, scanner *bufio.Scanner) {
-	for scanner.Scan() {
-		line := scanner.Text()
-		log.Printf("[%s]: %s\n", id, line)
-	}
-	if err := scanner.Err(); err != nil {
-		if strings.Contains(err.Error(), "file already closed") {
-			return
-		}
-		fmt.Printf("[%s] error reading: %v\n", id, err)
-	}
+/* Hook */
+
+// HookContext is the context passed to the ProcessHook methods.
+type HookContext struct {
+	Stdout      io.ReadCloser
+	Stderr      io.ReadCloser
+	Params      map[string]interface{}
+	ProcessID   string
+	ProcessName string
+	ProcessArgs []string
 }
 
-func handlePipe(id string, stdout, stderr io.ReadCloser) {
-	outScanner := bufio.NewScanner(stdout)
-	handleScanner(id, outScanner)
+// ProcessHook is the interface for process hooks.
+type ProcessHook interface {
+	// BeforeStart is called before the process is started.
+	BeforeStart(ctx HookContext)
+	// AfterStart is called after the process is started.
+	AfterStart(ctx HookContext)
+	// BeforeWait is called before the process is waited.
+	BeforeWait(ctx HookContext)
+	// AfterWait is called after the process is waited.
+	AfterWait(ctx HookContext, err error)
+}
 
-	errScanner := bufio.NewScanner(stderr)
-	handleScanner(id, errScanner)
+// DefaultProcessHook is the default implementation of ProcessHook.
+type DefaultProcessHook struct{}
+
+func (hook DefaultProcessHook) BeforeStart(ctx HookContext) {
+	fmt.Fprintf(os.Stdout, "Process[%s] starting with command: %s %s\n", ctx.ProcessID, ctx.ProcessName, strings.Join(ctx.ProcessArgs, " "))
+}
+
+func (hook DefaultProcessHook) AfterStart(ctx HookContext) {
+	fmt.Fprintf(os.Stdout, "Process[%s] started\n", ctx.ProcessID)
+}
+
+func (hook DefaultProcessHook) BeforeWait(ctx HookContext) {
+	go func() {
+		scanner := bufio.NewScanner(ctx.Stdout)
+		for scanner.Scan() {
+			fmt.Fprintf(os.Stdout, "Process[%s]: %s\n", ctx.ProcessID, scanner.Text())
+		}
+		if err := scanner.Err(); err != nil {
+			if strings.Contains(err.Error(), "file already closed") {
+				return
+			}
+			fmt.Fprintf(os.Stderr, "Process[%s] error reading stdout: %v\n", ctx.ProcessID, err)
+		}
+	}()
+
+	go func() {
+		scanner := bufio.NewScanner(ctx.Stderr)
+		for scanner.Scan() {
+			fmt.Fprintf(os.Stderr, "Process[%s]: %s\n", ctx.ProcessID, scanner.Text())
+		}
+		if err := scanner.Err(); err != nil {
+			if strings.Contains(err.Error(), "file already closed") {
+				return
+			}
+			fmt.Fprintf(os.Stderr, "Process[%s] error reading stderr: %v\n", ctx.ProcessID, err)
+		}
+	}()
+}
+
+func (hook DefaultProcessHook) AfterWait(ctx HookContext, err error) {
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Process[%s] wait error: %v\n", ctx.ProcessID, err)
+	} else {
+		fmt.Fprintf(os.Stdout, "Process[%s] done\n", ctx.ProcessID)
+	}
 }

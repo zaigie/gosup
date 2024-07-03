@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -17,9 +16,9 @@ func main() {
 
 	wd, _ := os.Getwd()
 	scriptPath := filepath.Join(wd, "test/run.py")
-	args1 := []string{"-u", scriptPath}
-	_, err := pm.Start("", "python", args1, hook.MyProcessHook{}, map[string]interface{}{
-		"prefix": "hello",
+	cmdArgs := []string{"-u", scriptPath}
+	_, err := pm.Start("python", cmdArgs, hook.MyProcessHook{}, map[string]interface{}{
+		"prefix": "gosup",
 	})
 	if err != nil {
 		fmt.Println(err)
@@ -27,17 +26,16 @@ func main() {
 
 	time.Sleep(2 * time.Second)
 
-	// args2 := []string{"-u", scriptPath}
-	// _, err = pm.Start("python", args2, nil, nil)
-	// if err != nil {
-	// 	fmt.Println(err)
-	// }
+	_, err = pm.StartWithID("p2", "python", cmdArgs, nil, nil)
+	if err != nil {
+		fmt.Println(err)
+	}
 
-	log.Println("waiting for 8 seconds")
+	fmt.Printf("System: waiting for 8 seconds\n")
 	time.Sleep(8 * time.Second)
 	pm.KillAll()
-	log.Println("killed all processes")
+	fmt.Printf("System: killed all processes\n")
 
 	pm.WaitAll()
-	log.Println("all processes are done")
+	fmt.Printf("System: all processes are done\n")
 }
