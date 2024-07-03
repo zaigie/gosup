@@ -6,17 +6,17 @@ Simply manage the start, stop and output of multiple processes through os/exec
 
 ```go
 func main() {
-	pm := gosup.NewManager()
-	defer pm.KillAll()
+    pm := gosup.NewManager()
+    defer pm.KillAll()
 
     wd, _ := os.Getwd()
-	scriptPath := filepath.Join(wd, "test/run.py")
+    scriptPath := filepath.Join(wd, "test/run.py")
 
     p1, err := pm.Start("python", []string{"-u", scriptPath}, nil, nil)
     if err != nil {
-		fmt.Println(err)
+        fmt.Println(err)
         return
-	}
+    }
 
     time.Sleep(8 * time.Second)
     pm.Stop(p1)
