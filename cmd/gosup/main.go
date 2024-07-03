@@ -7,12 +7,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/zaigie/gosup"
 	"github.com/zaigie/gosup/cmd/gosup/hook"
-	"github.com/zaigie/gosup/process"
 )
 
 func main() {
-	pm := process.NewManager()
+	pm := gosup.NewManager()
 	defer pm.KillAll()
 
 	wd, _ := os.Getwd()
