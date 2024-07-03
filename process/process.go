@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/google/uuid"
 )
@@ -160,8 +161,19 @@ func (pm *ProcessManager) Start(name string, args []string, hook ProcessHook, ho
 	return pm.StartWithID(id, name, args, hook, hookParams)
 }
 
-// Stop stops the process with the given ID.
-func (pm *ProcessManager) Stop(id string) error {
+func isStopSignal(sig syscall.Signal) bool {
+	switch sig {
+	case syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGKILL:
+		return true
+	}
+	return false
+}
+
+// StopWithSignal stops the process with the given ID using the given signal.
+func (pm *ProcessManager) StopWithSignal(id string, sig syscall.Signal) error {
+	if !isStopSignal(sig) {
+		return fmt.Errorf("invalid signal: %v, only SIGINT, SIGTERM, SIGHUP, SIGQUIT, and SIGKILL are allowed", sig)
+	}
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
@@ -171,12 +183,26 @@ func (pm *ProcessManager) Stop(id string) error {
 	}
 
 	close(process.stopChan)
-	if err := process.Cmd.Process.Kill(); err != nil {
+
+	if err := process.Cmd.Process.Signal(sig); err != nil {
 		return err
 	}
 
-	delete(pm.Processes, id)
+	if sig != syscall.SIGKILL {
+		go func() {
+			process.Cmd.Wait()
+			delete(pm.Processes, id)
+		}()
+	} else {
+		delete(pm.Processes, id)
+	}
+
 	return nil
+}
+
+// Stop stops the process with the given ID.
+func (pm *ProcessManager) Stop(id string) error {
+	return pm.StopWithSignal(id, syscall.SIGKILL)
 }
 
 // KillAll kills all running processes.

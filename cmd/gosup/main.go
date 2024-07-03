@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/zaigie/gosup/cmd/gosup/hook"
@@ -12,12 +13,12 @@ import (
 
 func main() {
 	pm := process.NewManager()
-	// defer pm.KillAll()
+	defer pm.KillAll()
 
 	wd, _ := os.Getwd()
 	scriptPath := filepath.Join(wd, "test/run.py")
 	cmdArgs := []string{"-u", scriptPath}
-	_, err := pm.Start("python", cmdArgs, hook.MyProcessHook{}, map[string]interface{}{
+	p1, err := pm.Start("python", cmdArgs, hook.MyProcessHook{}, map[string]interface{}{
 		"prefix": "gosup",
 	})
 	if err != nil {
@@ -33,8 +34,13 @@ func main() {
 
 	fmt.Printf("System: waiting for 8 seconds\n")
 	time.Sleep(8 * time.Second)
-	pm.KillAll()
-	fmt.Printf("System: killed all processes\n")
+
+	pm.Stop(p1)
+	err = pm.StopWithSignal("p2", syscall.SIGTERM)
+	if err != nil {
+		fmt.Println(err)
+		pm.Stop("p2")
+	}
 
 	pm.WaitAll()
 	fmt.Printf("System: all processes are done\n")

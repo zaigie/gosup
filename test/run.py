@@ -5,22 +5,23 @@ from datetime import datetime
 start_time = time.time()
 
 
-def signal_handler(sig, frame):
+def signal_handler(sig, _frame):
     end_time = time.time()
     elapsed_time = end_time - start_time
     end_datetime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"\n程序运行时间: {elapsed_time:.2f}秒")
-    print(f"结束时间：{end_datetime}")
-    print(f"结束信号：{sig}")
+    with open("stop.log", "a", encoding="utf-8") as f:
+        f.write(f"\nElapsed Time: {elapsed_time:.2f}s")
+        f.write(f"\nEnd Time: {end_datetime}")
+        f.write(f"\nAbort Signal: {sig}")
     exit(0)
 
 
-for sig in [signal.SIGINT, signal.SIGTERM, signal.SIGHUP]:
-    signal.signal(sig, signal_handler)
+for _sig in [signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT]:
+    signal.signal(_sig, signal_handler)
 
 if __name__ == "__main__":
-    print("程序开始运行...")
-    print(f"开始时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("Subprocess Running...")
+    print(f"Start Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     while True:
         time.sleep(1)
