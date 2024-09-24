@@ -4,14 +4,16 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
 	"syscall"
-
-	"github.com/google/uuid"
+	"time"
 )
+
+const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 var (
 	ErrorProcessNotFound = fmt.Errorf("process not found")
@@ -155,8 +157,13 @@ func (pm *ProcessManager) StartWithID(id string, name string, args []string, hoo
 
 // Start starts a process with a random ID.
 func (pm *ProcessManager) Start(name string, args []string, hook ProcessHook, hookParams map[string]interface{}) (string, error) {
-	id := uuid.New().String()[:8]
-	return pm.StartWithID(id, name, args, hook, hookParams)
+	// id := uuid.New().String()[:8]
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	id := make([]byte, 8)
+	for i := range id {
+		id[i] = charset[r.Intn(len(charset))]
+	}
+	return pm.StartWithID(string(id), name, args, hook, hookParams)
 }
 
 func isStopSignal(sig syscall.Signal) bool {

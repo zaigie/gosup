@@ -1,5 +1,3 @@
 module github.com/zaigie/gosup
 
-go 1.21.4
-
-require github.com/google/uuid v1.6.0
+go 1.23.1
