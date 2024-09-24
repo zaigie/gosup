@@ -147,9 +147,7 @@ func (pm *ProcessManager) StartWithID(id string, name string, args []string, hoo
 
 		pm.wg.Done()
 
-		if hook != nil {
-			hook.AfterWait(hookCtx, err)
-		}
+		hook.AfterWait(hookCtx, err)
 	}()
 
 	return id, nil
